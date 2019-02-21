@@ -1,0 +1,115 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+using System.Web.Mvc;
+using Activity2.Models;
+//////using MVC_Reporting.Reports;
+using System.Data;
+//using CrystalDecisions.CrystalReports.Engine;
+using System.IO;
+using Activity2.ViewModels;
+
+namespace Activity2.Controllers
+{
+    public class HomeController : Controller
+    {
+        public ActionResult Index()
+        {
+            return View();
+        }
+
+       /******************************************************************/
+
+        /******************************************************************/
+        /*The following actions are here to service the Advanced Report view*/
+        /******************************************************************/
+
+        //This action returns the Advanced view with its associated ViewModel
+        //This action will be called for the initial loading of the Advanced view
+        [HttpGet]
+        public ActionResult Report()
+        {
+            ReportVM vm = new ReportVM();
+
+            //Retrieve a list of vendors so that it can be used to populate the dropdown on the View
+            vm.Employees = GetEmployees(0);
+
+            //Set default values for the FROM and TO dates
+            vm.DateFrom = new DateTime(2014, 12, 1);
+            vm.DateTo = new DateTime(2014, 12, 31);
+
+
+            return View(vm);
+
+
+        }
+
+
+        //This action builds a collection of SelectList items based on the Vendor table in the DB
+        //The selected parameter is used to preselect an item in the SelectList. The selected item will be selected by default when the dropdown list on the view loads.
+        private SelectList GetEmployees(int selected)
+        {
+            using (HardwareDBEntities db = new HardwareDBEntities())
+            {
+                db.Configuration.ProxyCreationEnabled = false;
+
+                //Create a SelectListItem for each Vendor record in the DB
+                //Value is set to the primary key of the record and Text is set to the Name of the vendor
+                var employees = db.lgemployees.Select(x => new SelectListItem
+                {
+                    Value = x.emp_num.ToString(),
+                    Text = x.emp_fname
+                }).ToList();
+
+                //If selected pearameter has a value, configure the SelectList so that the apporiate item is preselected
+                if (selected == 0)
+                    return new SelectList(employees, "Value", "Text");
+                else
+                    return new SelectList(employees, "Value", "Text", selected);
+            }
+        }
+        ////This action is used to process the Advanced report criteria entered by the user and to return report data based on that criteria
+        [HttpPost]
+        public ActionResult Report(ReportVM vm)
+        {
+            using (HardwareDBEntities db = new HardwareDBEntities())
+            {
+                db.Configuration.ProxyCreationEnabled = false;
+
+                //Retrieve a list of vendors so that it can be used to populate the dropdown on the View
+                //The ID of the currently selected item is passed through so that the returned list has that item preselected
+                vm.Employees = GetEmployees(vm.SelectedEmployeeID);
+
+                //Get the full details of the selected vendor so that it can be displayed on the view
+                vm.employee = db.lgemployees.Where(x => x.emp_num == vm.SelectedEmployeeID).FirstOrDefault();
+
+                //Get all supplier orders that adheres to the entered criteria
+                //For each of the results, load data into a new ReportRecord object
+                var list = db.lgsalary_history.Where(pp => pp.emp_num == vm.employee.emp_num && pp.sal_from >= vm.DateFrom && pp.sal_end <= vm.DateTo).ToList().Select(rr => new ReportRecord
+                {
+                    SalaryEnd = rr.sal_end.ToString(),
+                    SalaryAmount = Convert.ToDouble(rr.sal_amount),
+                    EmployeeTitle = db.lgemployees.Where(tt => tt.emp_num == rr.emp_num).Select(x => x.emp_title).FirstOrDefault(),
+                    EmployeeName = db.lgemployees.Where(pp => pp.emp_num == rr.emp_num).Select(x => x.emp_fname + " " + x.emp_lname).FirstOrDefault(),
+                    EmployeeID = rr.emp_num.ToString()
+                });
+
+
+                //Load the list of ReportRecords returned by the above query into a new list grouped by Shipment Method
+                vm.results = list.GroupBy(g => g.EmployeeTitle).ToList();
+
+                //Load the list of ReportRecords returned by the above query into a new dictionary grouped by Employee
+                //This will be used to generate the chart on the View through the MicroSoft Charts helper
+                vm.chartData = list.GroupBy(g => g.EmployeeName).ToDictionary(g => g.Key, g => g.Sum(v => v.SalaryAmount));
+
+                //Store the chartData dictionary in temporary data so that it can be accessed by the EmployeeOrdersChart action resonsible for generating the chart
+                TempData["chartData"] = vm.chartData;
+                TempData["records"] = list.ToList();
+                TempData["employee"] = vm.employee;
+                return View(vm);
+            }
+        }
+
+    }
+}
